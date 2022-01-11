@@ -55,7 +55,7 @@ export class ModelBuilder extends Builder {
 
             return props;
         };
-
+        
         const buildIndexDecoratorProps = (index: IIndexMetadata): Partial<IndexOptions & IndexFieldOptions> => {
             const props: Partial<IndexOptions & IndexFieldOptions> = {
                 name: index.name,
@@ -66,11 +66,11 @@ export class ModelBuilder extends Builder {
 
             return props;
         };
-        
+     
         return ts.createProperty(
             [
-                ...(col.foreignKey ?
-                    [ generateArrowDecorator(foreignKeyDecorator, [col.foreignKey.targetModel.match(/[A-Z][a-z]+/g)?.map(val=>singularizePtBr(val)).join('') || col.foreignKey.targetModel]) ]
+                ...(col.foreignKey?.length ?
+                    col.foreignKey.map(fk => generateArrowDecorator(foreignKeyDecorator, [fk?.targetModel?.match(/[A-Z][a-z]+/g)?.map(val=>singularizePtBr(val)).join('') || fk.targetModel] ))
                     : []
                 ),
                 generateObjectLiteralDecorator('Column', buildColumnDecoratorProps(col)),
@@ -138,7 +138,7 @@ export class ModelBuilder extends Builder {
         strict: boolean = true
     ): string {
         const { originName: tableName, name, columns } = tableMetadata;
-
+        
         let generatedCode = '';
 
         // Named imports from sequelize-typescript
@@ -166,10 +166,10 @@ export class ModelBuilder extends Builder {
             importModels.add(a.targetModel);
             a.joinModel && importModels.add(a.joinModel);
         });
-
+        
         // Add models for foreign keys
         Object.values(tableMetadata.columns).forEach(col => {
-            col.foreignKey && importModels.add(col.foreignKey.targetModel);
+            col.foreignKey?.length && col.foreignKey.map(fk => importModels.add(fk.targetModel))
         });
 
         [...importModels].forEach(modelName => {
@@ -268,6 +268,10 @@ export class ModelBuilder extends Builder {
                     tableMetadata.associations.map(a => this.buildAssociationPropertyDecl(a)) : []
             ]
         );
+        
+        if (tableName === 'usuarios') {
+            console.log(columns)
+        }
 
         generatedCode += '\n';
         generatedCode += nodeToString(classDecl);
@@ -300,7 +304,7 @@ export class ModelBuilder extends Builder {
 
         console.log(`Fetching metadata from source`);
         const tablesMetadata = await this.dialect.buildTablesMetadata(this.config);
-
+    
         if (Object.keys(tablesMetadata).length === 0) {
             console.warn(`Couldn't find any table for database ${this.config.connection.database} and provided filters`);
             return;

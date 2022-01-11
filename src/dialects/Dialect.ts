@@ -4,7 +4,6 @@ import { IConfig } from '../config';
 import { createConnection } from "../connection";
 import { AssociationsParser, IAssociationsParsed, IAssociationMetadata } from './AssociationsParser'
 import { caseTransformer } from './utils';
-import {parse} from "@typescript-eslint/parser";
 
 export interface ITablesMetadata {
     [tableName: string]: ITableMetadata;
@@ -22,6 +21,11 @@ export interface ITableMetadata {
     comment?: string;
 }
 
+interface IColumnForeignKeyMetaData {
+    name: string;
+    targetModel: string;
+}
+
 export interface IColumnMetadata {
     name: string; // Model field name
     originName: string; // Database column name
@@ -29,10 +33,7 @@ export interface IColumnMetadata {
     typeExt: string;
     dataType?: string;
     primaryKey: boolean;
-    foreignKey?: {
-        name: string;
-        targetModel: string;
-    }
+    foreignKey?: IColumnForeignKeyMetaData[];
     allowNull: boolean;
     autoIncrement: boolean;
     indices?: IIndexMetadata[],
@@ -217,7 +218,6 @@ export abstract class Dialect {
         finally {
             connection && await connection.close();
         }
-
         // Apply associations if required
         if (config.metadata?.associationsFile) {
             const parsedAssociations = AssociationsParser.parse(config.metadata?.associationsFile);
@@ -233,28 +233,34 @@ export abstract class Dialect {
 
                 const { columns } = tablesMetadata[tableName];
 
+                const tableFks = []
                 // Override foreign keys
                 for (const { name: columnName, targetModel } of association.foreignKeys) {
                     if (!columns[columnName]) {
                         console.warn('[WARNING]', `Foreign key column ${columnName} not found among (${Object.keys(columns).join(', ')})`);
                         continue;
                     }
-
-                    columns[columnName].foreignKey = {
+                    
+                    const fk = {
                         name: columnName,
-                        targetModel: targetModel
-                    };
+                        targetModel
+                    }
+
+                    tableFks.push(fk)
+                    
+                    columns[columnName].foreignKey = tableFks
+                    
                 }
+                
             }
         }
-
         // Apply transformations if required
         if (config.metadata?.case) {
             for (const [tableName, tableMetadata] of Object.entries(tablesMetadata)) {
                 tablesMetadata[tableName] = caseTransformer(tableMetadata, config.metadata.case);
             }
         }
-
+      
         return tablesMetadata;
     }
 }

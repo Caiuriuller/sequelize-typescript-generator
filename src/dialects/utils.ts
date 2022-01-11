@@ -140,7 +140,7 @@ export const caseTransformer = (
     tableMetadata: ITableMetadata,
     transformCase: TransformCase | TransformMap | TransformFn
 ): ITableMetadata => {
-
+    
     const transformer: TransformFn = getTransformer(transformCase);
     
     const name = tableMetadata.originName.split('_').map(val=>singularizePtBr(val)).join('_')
@@ -170,12 +170,17 @@ export const caseTransformer = (
 
     for (const [columnName, columnMetadata] of Object.entries(tableMetadata.columns)) {
 
-        if (columnMetadata.foreignKey) {
-            const { name, targetModel } = columnMetadata.foreignKey;
+        if (columnMetadata.foreignKey?.length) {
 
-            columnMetadata.foreignKey = {
-                name: transformer(name, TransformTarget.COLUMN),
-                targetModel: transformer(targetModel, TransformTarget.MODEL),
+            const fks = columnMetadata.foreignKey
+
+            columnMetadata.foreignKey = []
+
+            for (const fk of fks) {
+                columnMetadata.foreignKey.push({
+                    name: transformer(fk.name, TransformTarget.COLUMN),
+                    targetModel: transformer(fk.targetModel, TransformTarget.MODEL), 
+                })    
             }
         }
 
@@ -185,7 +190,7 @@ export const caseTransformer = (
             { name: transformer(columnMetadata.originName, TransformTarget.COLUMN) }
         );
     }
-
+    
     return transformed;
 };
 
