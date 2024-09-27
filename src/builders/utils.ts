@@ -1,6 +1,8 @@
 import * as ts from 'typescript';
 
-const printer = ts.createPrinter({newLine: ts.NewLineKind.LineFeed});
+const printer = ts.createPrinter({
+    newLine: ts.NewLineKind.LineFeed,
+});
 
 /**
  * Returns string representation of typescript node
@@ -16,7 +18,11 @@ export const nodeToString = (node: ts.Node): string => {
         ts.ScriptKind.TS
     );
 
-    return printer.printNode(ts.EmitHint.Unspecified, node, sourceFile);
+    const sourceCode = printer.printNode(ts.EmitHint.Unspecified, node, sourceFile);
+
+    // Typescript automatically escape non ASCII characters like 哈 or 😂. This is a workaround to render them properly.
+    // Reference: https://github.com/microsoft/TypeScript/issues/36174
+    return unescape(sourceCode.replace(/\\u/g, "%u"));
 };
 
 /**
@@ -26,19 +32,19 @@ export const nodeToString = (node: ts.Node): string => {
  * @returns {string} Named import code
  */
 export const generateNamedImports = (importsSpecifier: string[], moduleSpecifier: string): ts.ImportDeclaration => {
-    return ts.createImportDeclaration(
-        /* decorators */ undefined,
-        /* modifiers */ undefined,
-        ts.createImportClause(
+    return ts.factory.createImportDeclaration(
+        undefined,
+        ts.factory.createImportClause(
+            false,
             undefined,
-            ts.createNamedImports(
+            ts.factory.createNamedImports(
                 [
                     ...importsSpecifier
-                        .map(is => ts.createImportSpecifier(false, undefined, ts.createIdentifier(is)))
+                        .map(is => ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(is)))
                 ]
             )
         ),
-        ts.createLiteral(moduleSpecifier)
+        ts.factory.createStringLiteral(moduleSpecifier)
     );
 };
 
@@ -48,11 +54,11 @@ export const generateNamedImports = (importsSpecifier: string[], moduleSpecifier
  * @returns {ts.ExportDeclaration}
  */
 export const generateIndexExport = (modelFileName: string): ts.ExportDeclaration => {
-    return ts.createExportDeclaration(
-        [],
+    return ts.factory.createExportDeclaration(
         undefined,
+        false,
         undefined,
-        ts.createLiteral(`./${modelFileName}`)
+        ts.factory.createStringLiteral(`./${modelFileName}`)
     );
 };
 
@@ -69,25 +75,39 @@ export const generateObjectLiteralDecorator = (
     const _createPropertyAssignment = (propName: string, propValue: any): ts.PropertyAssignment => {
         let expression: ts.Expression;
 
-        if (typeof propValue === 'number') {
-            expression = ts.createNumericLiteral(propValue);
-        }
-        else if (typeof propValue === 'string' && (propValue.startsWith('DataType.') || propValue.startsWith('Sequelize.'))) {
-            expression = ts.createIdentifier(propValue);
-        }
-        else {
-            expression = ts.createLiteral(propValue);
+        switch (typeof propValue) {
+            case 'number':
+                expression = ts.factory.createNumericLiteral(propValue);
+                break;
+            case 'string':
+                if (propValue.startsWith('DataType.') || propValue.startsWith('Sequelize.')) {
+                    expression = ts.factory.createIdentifier(propValue);
+                }
+                else {
+                    expression = ts.factory.createStringLiteral(propValue);
+                }
+                break;
+            case 'boolean':
+                if (propValue) {
+                    expression = ts.factory.createTrue();
+                }
+                else {
+                    expression = ts.factory.createFalse();
+                }
+                break;
+            default:
+                expression = ts.factory.createIdentifier(propValue);
         }
 
-        return ts.createPropertyAssignment(propName, expression);
+        return ts.factory.createPropertyAssignment(propName, expression);
     }
 
-    return ts.createDecorator(
-        ts.createCall(
-            ts.createIdentifier(decoratorIdentifier),
+    return ts.factory.createDecorator(
+        ts.factory.createCallExpression(
+            ts.factory.createIdentifier(decoratorIdentifier),
             undefined,
             [
-                ts.createObjectLiteral(
+                ts.factory.createObjectLiteralExpression(
                     [
                         ...Object.entries(props)
                             .map(e => _createPropertyAssignment(e[0], e[1]))
@@ -111,27 +131,41 @@ export const generateArrowDecorator = (
     objectLiteralProps?: object
 ): ts.Decorator => {
     const argumentsArray: ts.Expression[] = arrowTargetIdentifiers.map(t =>
-        ts.createArrowFunction(
+        ts.factory.createArrowFunction(
             undefined,
             undefined,
             [],
             undefined,
-            ts.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-            ts.createIdentifier(t)
+            ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+            ts.factory.createIdentifier(t)
         ),
     );
 
     objectLiteralProps && argumentsArray.push(
-        ts.createObjectLiteral([
-            ...Object.entries(objectLiteralProps).map(e =>
-                ts.createPropertyAssignment(e[0], ts.createLiteral(e[1]))
-            )
+        ts.factory.createObjectLiteralExpression([
+            ...Object.entries(objectLiteralProps).map(e => {
+                let initializer: ts.Expression;
+
+                switch (typeof e[1]) {
+                    case 'number':
+                        initializer = ts.factory.createNumericLiteral(e[1]);
+                        break;
+                    case 'boolean':
+                        initializer = e[1] ? ts.factory.createTrue() : ts.factory.createFalse();
+                        break;
+                    default:
+                        initializer = ts.factory.createStringLiteral(e[1]);
+                        break;
+                }
+
+                return ts.factory.createPropertyAssignment(e[0], initializer);
+            }),
         ])
     );
 
-    return ts.createDecorator(
-        ts.createCall(
-            ts.createIdentifier(decoratorIdentifier),
+    return ts.factory.createDecorator(
+        ts.factory.createCallExpression(
+            ts.factory.createIdentifier(decoratorIdentifier),
             undefined,
             argumentsArray
         )

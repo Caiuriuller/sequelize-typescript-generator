@@ -89,11 +89,11 @@ const sequelizeDataTypesMap: { [key: string]: AbstractDataTypeConstructor } = {
 };
 
 const jsDataTypesMap: { [key: string]: string } = {
-    bigint: 'object',
+    bigint: 'string',
     smallint: 'number',
     mediumint: 'number',
     tinyint: 'number',
-    decimal: 'number',
+    decimal: 'string',
     float: 'number',
     double: 'number',
     int: 'number',
@@ -184,7 +184,8 @@ export class DialectMariaDB extends Dialect {
                 table_name      AS table_name, 
                 table_comment   AS table_comment  
             FROM information_schema.tables
-            WHERE table_schema = '${config.connection.database}';
+            WHERE table_schema = '${config.connection.database}'
+                ${config.metadata?.noViews ? 'AND table_type <> \'VIEW\'' : ''};
         `;
 
         const tables: ITable[] = (await connection.query(

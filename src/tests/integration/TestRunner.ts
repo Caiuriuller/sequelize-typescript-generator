@@ -81,6 +81,17 @@ const initTestDatabase = async (testMetadata: ITestMetadata, connection: Sequeli
             }
         }
     }
+
+    if (testMetadata.testViews) {
+        for (const testView of testMetadata.testViews) {
+            const { createQueries, dropQuery } = testView;
+            await connection.query(dropQuery);
+
+            for (const createQuery of createQueries) {
+                await connection.query(createQuery);
+            }
+        }
+    }
 };
 
 /**
@@ -112,7 +123,7 @@ export class TestRunner {
 
         describe(testMetadata.name, () => {
             jest.setTimeout(120000);
-            const outDir = path.join(process.cwd(), 'output-models');
+            const outDir = path.join(process.cwd(), 'src/tests/integration/output-models');
             const indexDir = path.join(outDir, 'index.ts');
             const associationsFilePath = path.join(process.cwd(), 'src', 'tests', 'integration', 'associations.csv');
             const sequelizeOptions = buildSequelizeOptions(testMetadata.dialect);
@@ -178,7 +189,7 @@ export class TestRunner {
                 });
             });
 
-            describe('Filter --tables', () => {
+            describe('Tables', () => {
                 const { testTables, filterTables } = testMetadata;
                 let connection: Sequelize | undefined;
 
@@ -209,7 +220,7 @@ export class TestRunner {
                     connection && await connection.close();
                 });
 
-                it('should register only the provided tables', () => {
+                it('should add only the provided tables', () => {
                     connection!.addModels([ outDir ]);
 
                     for (const table of filterTables) {
@@ -225,7 +236,7 @@ export class TestRunner {
                 });
             });
 
-            describe('Filter --skip-tables', () => {
+            describe('Skip tables', () => {
                 const { testTables, filterSkipTables } = testMetadata;
                 let connection: Sequelize | undefined;
 
@@ -271,6 +282,54 @@ export class TestRunner {
                     }
                 });
             });
+
+            if (testMetadata.testViews) {
+                describe('Skip views', () => {
+                    const { testTables } = testMetadata;
+                    const testViews = testMetadata.testViews!;
+                    let connection: Sequelize | undefined;
+
+                    beforeAll(async () => {
+                        connection = createConnection({ ...sequelizeOptions });
+                        await connection.authenticate();
+                        await initTestDatabase(testMetadata, connection);
+
+                        const config: IConfig = {
+                            connection: sequelizeOptions,
+                            metadata: {
+                                ...testMetadata.schema && { schema: testMetadata.schema.name },
+                                noViews: true,
+                            },
+                            output: {
+                                outDir: outDir,
+                                clean: true,
+                            }
+                        };
+
+                        const dialect = buildDialect(testMetadata);
+                        const builder = new ModelBuilder(config, dialect);
+                        await builder.build();
+                        await fs.unlink(indexDir);
+                    });
+
+                    afterAll(async () => {
+                        connection && await connection.close();
+                    });
+
+                    it('should skip views', () => {
+                        connection!.addModels([ outDir ]);
+
+                        for (const { name: tableName } of testTables) {
+                            connection!.model(tableName);
+                            expect(connection!.isDefined(tableName)).toBe(true);
+                        }
+
+                        for (const { name: viewName } of testViews) {
+                            expect(() => connection!.model(viewName)).toThrow();
+                        }
+                    });
+                });
+            }
 
             describe('Transform case in table and fields names', () => {
                 const { testTables } = testMetadata;
@@ -510,16 +569,22 @@ export class TestRunner {
                     const personField = pluralize.singular(testMetadata.associations.leftTableOneToOne);
                     const passportField = pluralize.singular(testMetadata.associations.rightTableOneToOne);
 
-                    const people = await personModel.findAll({  include: [ passportModel ] });
+                    const personRows = (await personModel.findAll({  include: [ passportModel ] }))
+                        .map(e => e.toJSON());
 
-                    for (const person of people) {
+                    for (const person of personRows) {
                         expect(person).toHaveProperty(passportField);
+                        expect(person[passportField]).toBeDefined();
+                        expect(Array.isArray(person[passportField])).toBeFalsy();
                     }
 
-                    const passports = await passportModel.findAll({  include: [ personModel ] });
+                    const passportRows = (await passportModel.findAll({  include: [ personModel ] }))
+                        .map(e => e.toJSON());
 
-                    for (const pass of passports) {
-                        expect(pass).toHaveProperty(personField);
+                    for (const passport of passportRows) {
+                        expect(passport).toHaveProperty(personField);
+                        expect(passport[personField]).toBeDefined();
+                        expect(Array.isArray(passport[personField])).toBeFalsy();
                     }
                 });
 
@@ -529,22 +594,36 @@ export class TestRunner {
                     const raceField = pluralize.singular(testMetadata.associations.leftTableOneToMany);
                     const unitsField = pluralize.plural(testMetadata.associations.rightTableOneToMany);
 
-                    const races = await racesModel.findAll({  include: [ unitsModel ] });
+                    const racesRows = (await racesModel.findAll({  include: [ unitsModel ] }))
+                        .map(e => e.toJSON());
 
-                    for (const race of races) {
+                    for (const race of racesRows) {
                         expect(race).toHaveProperty(unitsField);
+                        expect(Array.isArray(race[unitsField])).toBe(true);
 
-                        // @ts-ignore
-                        const associatedUnits = race[unitsField];
-
-                        expect(associatedUnits).toHaveProperty('length');
-                        expect(associatedUnits.length).toBeGreaterThanOrEqual(1);
+                        switch (race.race_name) {
+                            case 'Orcs':
+                                expect(race[unitsField].length).toBe(2);
+                                break;
+                            case 'Humans':
+                                expect(race[unitsField].length).toBe(1);
+                                break;
+                            case 'Night Elves':
+                                expect(race[unitsField].length).toBe(2);
+                                break;
+                            case 'Undead':
+                                expect(race[unitsField].length).toBe(2);
+                                break;
+                        }
                     }
 
-                    const units = await unitsModel.findAll({  include: [ racesModel ] });
+                    const unitsRows = (await unitsModel.findAll({  include: [ racesModel ] }))
+                        .map(e => e.toJSON());
 
-                    for (const unit of units) {
+                    for (const unit of unitsRows) {
                         expect(unit).toHaveProperty(raceField);
+                        expect(unit[raceField]).toBeDefined();
+                        expect(Array.isArray(unit[raceField])).toBeFalsy();
                     }
                 });
 
@@ -554,28 +633,22 @@ export class TestRunner {
                     const authorsField = pluralize.plural(testMetadata.associations.leftTableManyToMany);
                     const booksField = pluralize.plural(testMetadata.associations.rightTableManyToMany);
 
-                    const authors = await authorsModel.findAll({  include: [ booksModel ] });
+                    const authorsRows = (await authorsModel.findAll({  include: [ booksModel ] }))
+                        .map(e => e.toJSON());
 
-                    for (const author of authors) {
+                    for (const author of authorsRows) {
                         expect(author).toHaveProperty(booksField);
-
-                        // @ts-ignore
-                        const associatedBooks = author[booksField];
-
-                        expect(associatedBooks).toHaveProperty('length');
-                        expect(associatedBooks.length).toBeGreaterThanOrEqual(1);
+                        expect(Array.isArray(author[booksField])).toBe(true);
+                        expect(author[booksField].length).toBeGreaterThanOrEqual(1);
                     }
 
-                    const books = await booksModel.findAll({  include: [ authorsModel ] });
+                    const booksRows = (await booksModel.findAll({  include: [ authorsModel ] }))
+                        .map(e => e.toJSON());
 
-                    for (const book of books) {
+                    for (const book of booksRows) {
                         expect(book).toHaveProperty(authorsField);
-
-                        // @ts-ignore
-                        const associatedAuthors = book[authorsField];
-
-                        expect(associatedAuthors).toHaveProperty('length');
-                        expect(associatedAuthors.length).toBeGreaterThanOrEqual(1);
+                        expect(Array.isArray(book[authorsField])).toBe(true);
+                        expect(book[authorsField].length).toBeGreaterThanOrEqual(1);
                     }
                 });
             });
